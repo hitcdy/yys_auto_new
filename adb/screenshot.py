@@ -1,5 +1,6 @@
 import cv2
 import numpy as np
+import struct
 from adb.adb_client import ADBClient
 
 
@@ -8,37 +9,34 @@ class ScreenCapturer:
         self.adb_client = adb_client
 
     def capture(self) -> np.ndarray:
-        """
-        浠庤澶囨埅灞忓苟杩斿洖 OpenCV 鏍煎紡鍥惧儚 (BGR)
-        """
-        # 1?? 鑾峰彇 PNG 瀛楄妭娴�
-        img_bytes = self.adb_client.screencap()
-
-        if not img_bytes:
+        data = self.adb_client.screencap()
+        if not data:
             raise RuntimeError("Screenshot failed: empty image data")
 
-        # 2?? 杞负 numpy 鏁扮粍
-        img_array = np.frombuffer(img_bytes, np.uint8)
+        w, h, fmt = struct.unpack_from("<III", data, 0)
+        expected = w * h * 4
+        header_size = len(data) - expected
 
-        # 3?? 瑙ｇ爜涓� OpenCV 鍥惧儚
-        img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+        if header_size < 12 or header_size > 64:
+            raise RuntimeError(f"Unexpected screencap header size: {header_size}")
 
-        if img is None:
-            raise RuntimeError("Failed to decode screenshot")
+        pixels = data[header_size:]
+
+        if fmt == 1:  # RGBA_8888
+            img = np.frombuffer(pixels, np.uint8).reshape(h, w, 4)
+            img = cv2.cvtColor(img, cv2.COLOR_RGBA2BGR)
+        else:
+            img = np.frombuffer(pixels, np.uint8)
+            img = cv2.imdecode(img, cv2.IMREAD_COLOR)
+            if img is None:
+                raise RuntimeError("Failed to decode screenshot")
 
         return img
 
     def capture_gray(self) -> np.ndarray:
-        """
-        杩斿洖鐏板害鍥撅紙鐢ㄤ簬妯℃澘鍖归厤绛夛級
-        """
         img = self.capture()
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        return gray
+        return cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
     def save(self, path: str):
-        """
-        鎴浘骞朵繚瀛樺埌鏈湴锛堣皟璇曠敤锛�
-        """
         img = self.capture()
         cv2.imwrite(path, img)

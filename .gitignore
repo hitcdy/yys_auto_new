@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# 第三方工具/大体积依赖（本地需要但不入库，另行安装）
+Tesseract-OCR/
+*.zip
+
+# 本地编辑器/工具配置
+.vscode/
+.idea/
+.claude/
+.DS_Store
+Thumbs.db

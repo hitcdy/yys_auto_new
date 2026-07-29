@@ -2,6 +2,8 @@
 
 import time
 import threading
+import subprocess
+import platform
 from core.state import GameState
 
 class BotController:
@@ -17,6 +19,7 @@ class BotController:
         self.game_controller = game_controller
         self.interval = interval
         self._max_runtime = -1.0   # 新增
+        self._shutdown_on_timeout = False  # 达到最大运行时长后是否自动关机（默认关闭，每次启动需手动开启）
 
         # 线程控制
         self._running = False
@@ -53,7 +56,7 @@ class BotController:
             daemon=True
         )
         self._thread.start()'''
-    def start(self, max_runtime: float = -1.0):
+    def start(self, max_runtime: float = -1.0, shutdown_on_timeout: bool = False):
         if self._running:
             return
         if not self.game_controller.is_device_connected():
@@ -61,6 +64,7 @@ class BotController:
             return
 
         self._max_runtime = max_runtime   # 保存限制
+        self._shutdown_on_timeout = shutdown_on_timeout  # 是否在达到最大运行时长后关机
         print("Bot started")
         self.game_controller.state = GameState.CHOOSING
         self._running = True
@@ -81,6 +85,7 @@ class BotController:
             return
 
         print("Bot stopped")
+        self.game_controller._stop_accel()
         self._running = False
         self._state = "已暂停"
 
@@ -120,6 +125,8 @@ class BotController:
                     with self._lock:
                         self._running = False
                         self._state = "达到运行时长限制"
+                    if self._shutdown_on_timeout:
+                        self._trigger_shutdown()
                     break
 
             try:
@@ -127,6 +134,7 @@ class BotController:
 
                 if self.game_controller.state == GameState.PAUSE:
                     print("检测到暂停请求，停止脚本")
+                    self.game_controller._stop_accel()
                     with self._lock:
                         self._running = False
                         self._state = "暂停图标触发"
@@ -141,7 +149,26 @@ class BotController:
                 self._running = False
                 break
 
-            time.sleep(self.interval)
+            time.sleep(self.game_controller.get_interval())
+
+    # =====================================
+    # ⏻ 自动关机（达到最大运行时长且用户在 UI 手动开启时触发）
+    #    留 60 秒倒计时，期间可用 `shutdown /a`（Windows）手动取消。
+    # =====================================
+    def _trigger_shutdown(self, grace_seconds: int = 60):
+        print(f"[自动关机] 达到最大运行时长，将在 {grace_seconds} 秒后关机（可手动取消）")
+        try:
+            sys_name = platform.system()
+            if sys_name == "Windows":
+                # /s 关机 /t N 倒计时 N 秒；取消命令：shutdown /a
+                subprocess.run(["shutdown", "/s", "/t", str(grace_seconds)], check=False)
+            elif sys_name == "Linux":
+                subprocess.run(["shutdown", "-h", f"+{max(1, grace_seconds // 60)}"], check=False)
+            else:
+                subprocess.run(["shutdown", "-h", "now"], check=False)
+        except Exception as e:
+            print(f"[自动关机] 调用关机命令失败: {e}")
+
     # =====================================
     # 📊 状态接口（给UI调用）
     # =====================================
@@ -149,11 +176,11 @@ class BotController:
     def get_cycle_times(self):
         with self._lock:
             return self._cycle_times
-        
+
     def get_win_cnts(self):
         with self._lock:
             return self.game_controller.win_cnt
-        
+
     def get_operating_time(self):
         if not self._start_time:
             return 0
@@ -165,7 +192,7 @@ class BotController:
 
     def get_state(self):
         return self._state
-    
+
     def get_states(self):
         return self.game_controller.state
 
@@ -184,14 +211,15 @@ class BotController:
     # 🎲 随机参数更新
     # =====================================
 
-    def update_random_config(self, delay_range, offset_range, mode1, mode2):
+    def update_random_config(self, delay_range, offset_range, mode1, mode2, accel):
         self.game_controller.adb.configure_random(
             delay_range=delay_range,
             offset_range=offset_range,
             mode1 = mode1,
             mode2 = mode2
         )
-        print("随机参数已更新:", delay_range, offset_range,mode1, mode2)
+        self.game_controller.set_accel(accel)
+        print("随机参数已更新:", delay_range, offset_range,mode1, mode2, "加速:", accel)
 
     # =====================================
     # 🔌 设备状态检查

@@ -166,20 +166,26 @@ class ADBClient:
 
 
     # =====================================
-    # 截图
+    # 截图（raw 格式，超时自动重试）
     # =====================================
-    def screencap(self) -> bytes:
+    def screencap(self, retries=3) -> bytes:
         if not self.is_connected():
             raise RuntimeError("设备未连接")
 
-        result = subprocess.run(
-            self._build_cmd(["exec-out", "screencap", "-p"]),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            timeout=10
-        )
+        for attempt in range(retries):
+            try:
+                result = subprocess.run(
+                    self._build_cmd(["exec-out", "screencap"]),
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    timeout=15
+                )
+                if result.returncode != 0:
+                    raise RuntimeError("ADB screencap failed")
+                return result.stdout
+            except subprocess.TimeoutExpired:
+                print(f"  screencap 超时 (第{attempt+1}次)，重试...")
+            except Exception as e:
+                print(f"  screencap 异常: {e}，重试...")
 
-        if result.returncode != 0:
-            raise RuntimeError("ADB screencap failed")
-
-        return result.stdout
+        raise RuntimeError("ADB screencap 多次重试后仍失败")

@@ -22,6 +22,7 @@ def main():
         "cross": "template/cross_tp.png",
         "fight_tp": "template/fight_tp.png",
         "jiejie": "template/jiejie.png",
+        "quit_b": "template/quit_battle.png",
         "shuaxin": "template/shuaxin.png",
         "zaizhan": "template/re_fight.png",
         "ensure_s": "template/ensure_s.png",

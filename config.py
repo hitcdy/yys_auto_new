@@ -13,7 +13,8 @@ def load_config():
         "offset_px": 5,
         "mode1": '无',
         "max_runtime": -1.0,
-        "mode2":'只打加成'
+        "mode2":'只打加成',
+        "accel": True
     }
 
     if not os.path.exists(CONFIG_FILE):

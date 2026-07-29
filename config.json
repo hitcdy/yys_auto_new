@@ -2,6 +2,7 @@
     "delay_ms": 200.0,
     "offset_px": 1,
     "mode1": "自动突破",
-    "max_runtime": 300.0,
-    "mode2": "全打"
+    "max_runtime": 360.0,
+    "mode2": "全打",
+    "accel": true
 }
