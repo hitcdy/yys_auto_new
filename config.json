@@ -1,8 +1,10 @@
 {
     "delay_ms": 200.0,
     "offset_px": 1,
-    "mode1": "自动突破",
+    "mode1": "爬塔",
     "max_runtime": 360.0,
     "mode2": "全打",
-    "accel": true
+    "accel": false,
+    "screenshot_enhance": false,
+    "mumu_path": "D:\\Program Files\\Netease\\MuMu"
 }

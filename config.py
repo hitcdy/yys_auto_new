@@ -14,7 +14,9 @@ def load_config():
         "mode1": '无',
         "max_runtime": -1.0,
         "mode2":'只打加成',
-        "accel": True
+        "accel": True,
+        "screenshot_enhance": False,
+        "mumu_path": r"D:\Program Files\Netease\MuMu"
     }
 
     if not os.path.exists(CONFIG_FILE):
