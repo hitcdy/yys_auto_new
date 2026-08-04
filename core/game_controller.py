@@ -97,6 +97,7 @@ class GameController:
     # 🎮 主循环单次执行
     # =====================================
     def run_once(self):
+        self.detector.begin_round()  # 清空上轮命中框，预览只显示本轮
         screen = self.detector.get_screen()
 
         # mode1 强制进入活动状态（爬塔/御灵/寮突/仅突破），每轮重设以保持在该模式

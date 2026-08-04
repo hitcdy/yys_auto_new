@@ -1,5 +1,6 @@
-import gradio as gr
-from ui.gra_ui import create_ui
+import sys
+from PySide6.QtWidgets import QApplication
+from ui.qt_ui import MainWindow
 
 def main():
     # 模板路径字典（与原代码完全一致）
@@ -37,8 +38,10 @@ def main():
         "jingong": "template/jingong.png",
         "win_lt": "template/win_lt.png"
     }
-    demo = create_ui(template_paths)
-    demo.launch(server_name="0.0.0.0", server_port=7860)
+    app = QApplication(sys.argv)
+    win = MainWindow(template_paths)
+    win.show()
+    sys.exit(app.exec())
 
 if __name__ == "__main__":
     main()
