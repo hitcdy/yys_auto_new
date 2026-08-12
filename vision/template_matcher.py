@@ -1,5 +1,6 @@
 # vision/template_matcher.py
 
+import os
 import cv2
 import numpy as np
 from typing import Optional, Tuple, List
@@ -17,6 +18,8 @@ class TemplateMatcher:
     # =====================================
     def load_templates(self, template_paths: dict):
         for name, path in template_paths.items():
+            # 双保险：归一化为绝对路径，对已绝对路径幂等，彻底摆脱 CWD 依赖
+            path = os.path.abspath(path)
             img = cv2.imread(path)
             if img is None:
                 raise ValueError(f"Template '{name}' failed to load: {path}")

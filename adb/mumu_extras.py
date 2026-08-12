@@ -26,11 +26,16 @@ _CANDIDATE_DLL_PATHS = [
 
 
 class MuMuExtras:
-    """MuMu 截图增强（仅截图，不含触控）。"""
+    """MuMu 截图 + 触摸增强（ctypes 复刻 MAA 的 MumuExtras）。
+
+    触摸为可选能力：旧版 MuMu 的 external_renderer_ipc.dll 可能不导出
+    nemu_input_event_finger_touch_down/up，此时 input_available=False，
+    由调用方回退到其它触摸通道。
+    """
 
     def __init__(self, mumu_path: str, inst_index: int):
         if not MuMuExtras.is_supported():
-            raise RuntimeError(f"当前平台不支持 MuMu 截图增强: {platform.system()}")
+            raise RuntimeError(f"当前平台不支持 MuMu 增强: {platform.system()}")
 
         self.mumu_path = mumu_path
         self.inst_index = inst_index
@@ -40,6 +45,7 @@ class MuMuExtras:
         self._height = 0
         self._buffer = None
         self._lib = None
+        self.input_available = False  # 触摸能力（截图能力由构造成功与否决定）
 
         dll_path = MuMuExtras.find_dll(mumu_path)
         if not dll_path:
@@ -97,6 +103,52 @@ class MuMuExtras:
             raise RuntimeError(f"无效的显示尺寸: {self._width}x{self._height}")
 
         self._buffer = (ctypes.c_ubyte * (self._width * self._height * 4))()
+
+        # 触摸能力探测：旧版 DLL 不导出这两个符号，缺失则 input_available 保持 False。
+        # 签名参照 MAA MumuExtras.cpp:147,175 —— finger_id 从 1 起，返回 0 表示成功。
+        try:
+            self._lib.nemu_input_event_finger_touch_down.restype = ctypes.c_int
+            self._lib.nemu_input_event_finger_touch_down.argtypes = [
+                ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int
+            ]
+            self._lib.nemu_input_event_finger_touch_up.restype = ctypes.c_int
+            self._lib.nemu_input_event_finger_touch_up.argtypes = [
+                ctypes.c_int, ctypes.c_int, ctypes.c_int
+            ]
+            self.input_available = True
+        except AttributeError:
+            self.input_available = False
+        except Exception:
+            self.input_available = False
+
+    # =====================================
+    # 🖼️ 触摸接口（供 ADBClient 通道分发调用）
+    #    contact 从 0 起；MuMu 的 finger_id 从 1 起，故传 contact + 1。
+    #    返回 0 表示成功（参照 MAA）。
+    # =====================================
+    def touch_down(self, contact: int, x: int, y: int) -> bool:
+        if not self.input_available:
+            return False
+        ret = self._lib.nemu_input_event_finger_touch_down(
+            self._handle, self._display_id, contact + 1, x, y
+        )
+        return ret == 0
+
+    def touch_move(self, contact: int, x: int, y: int) -> bool:
+        # MuMu 没有单独的 move，重复 touch_down 即可（与 MAA MumuExtras.cpp:156-160 一致）
+        return self.touch_down(contact, x, y)
+
+    def touch_up(self, contact: int) -> bool:
+        if not self.input_available:
+            return False
+        ret = self._lib.nemu_input_event_finger_touch_up(
+            self._handle, self._display_id, contact + 1
+        )
+        return ret == 0
+
+    def get_display_size(self):
+        """返回 MuMu display 原生尺寸 (width, height)，供触摸坐标系校验。"""
+        return (self._width, self._height)
 
     def screencap(self) -> np.ndarray:
         """抓帧，返回 BGR np.ndarray（与 ScreenCapturer.capture 输出一致）。"""

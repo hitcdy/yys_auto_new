@@ -2,14 +2,9 @@ import gradio as gr
 import time
 import subprocess
 from config import load_config, save_config
-from core.bot_controller import BotController
-from core.game_controller import GameController
-from vision.detector import Detector
-from vision.template_matcher import TemplateMatcher
+from core.device_assembler import assemble_device
 from vision.ocr_engine import OCREngine
-from adb.screenshot import ScreenCapturer
 from adb.adb_client import ADBClient
-from adb.mumu_extras import MuMuExtras
 
 _ocr_engine = None
 
@@ -80,20 +75,20 @@ def create_ui(template_paths):
                                 value='加速' if config.get("accel", True) else '非加速',
                                 interactive=True
                             )
-                            enhance_cb = gr.Checkbox(
-                                label='使用截图增强(MuMu)',
-                                value=config.get("screenshot_enhance", False),
-                                interactive=True
-                            )
                             mumu_path = gr.Textbox(
                                 label='MuMu 安装路径',
                                 value=config.get("mumu_path", r"D:\Program Files\Netease\MuMu"),
                                 interactive=True
                             )
+                            ld_path = gr.Textbox(
+                                label='雷电安装路径（留空自动探测）',
+                                value=config.get("ld_path", ""),
+                                interactive=True
+                            )
                             gr.Markdown(
-                                "> 截图增强可用条件：仅 Windows + MuMu 模拟器；路径下需存在 "
-                                "external_renderer_ipc.dll；设备地址为 127.0.0.1:xxxx（多开自动按端口解析"
-                                "实例编号）；未生效时自动回退 ADB 截图。"
+                                "> 截图/触摸强化自动启用，无需手动勾选：截图按序尝试 MuMu → 雷电 → ADB；"
+                                "触摸按序尝试 MuMu → minitouch → ADB。前者不可用自动跳过，不报错。"
+                                "MuMu 路径需含 external_renderer_ipc.dll；雷电路径需含 ldopengl64.dll。"
                             )
                             shutdown_cb = gr.Checkbox(
                                 label='达到最大运行时长后自动关机（默认关闭，每次需手动勾选）',
@@ -116,49 +111,31 @@ def create_ui(template_paths):
                         devices = ADBClient.list_devices()
                         return gr.update(choices=devices)
                     
-                    def connect_device(device, enhance_val, mumu_path_val, i=idx-1):
+                    def connect_device(device, mumu_path_val, ld_path_val, i=idx-1):
                         if not device:
                             return "未选择设备"
-                        # 为该设备创建控制器链
-                        adb = ADBClient(device_id=device)
-                        capturer = ScreenCapturer(adb)
-
-                        # 截图增强：按勾选与路径尝试构造 MuMuExtras，失败回退 ADB
-                        enhance_status = ""
-                        if enhance_val:
-                            try:
-                                if not MuMuExtras.is_supported():
-                                    raise RuntimeError("非 Windows 平台")
-                                path = mumu_path_val or ""
-                                if not MuMuExtras.find_dll(path):
-                                    raise RuntimeError(f"路径下未找到 external_renderer_ipc.dll: {path}")
-                                mumu_idx = MuMuExtras.get_mumu_index(device)
-                                if mumu_idx is None:
-                                    raise RuntimeError(f"无法从地址解析实例编号: {device}")
-                                capturer.set_extras(MuMuExtras(path, mumu_idx))
-                                enhance_status = f" [截图增强已启用, 实例{mumu_idx}]"
-                            except Exception as e:
-                                enhance_status = f" [截图增强未生效: {e}, 回退 ADB]"
-
-                        matcher = TemplateMatcher()
-                        # 加载模板（所有设备共享同一套模板）
-                        matcher.load_templates(template_paths)
-                        detector = Detector(matcher, _get_ocr_engine(), capturer)
-                        game_ctrl = GameController(detector, adb)
-                        bot = BotController(game_ctrl, interval=1.0)
-                        controllers[i] = bot
-                        # 应用当前控件的配置
                         try:
-                            delay_ms = float(delay.value)
-                            offset_px = int(click_offset.value)
-                            mode1_val = mode1.value
-                            mode2_val = mode2.value
-                            accel_val = (accel.value == '加速')
-                            delay_range = (0, delay_ms / 1000)
-                            bot.update_random_config(delay_range, (offset_px, offset_px), mode1_val, mode2_val, accel_val)
+                            adb, capturer, matcher, detector, game_ctrl, bot, status = assemble_device(
+                                device, mumu_path=mumu_path_val or "", ld_path=ld_path_val or "",
+                                ocr_engine=_get_ocr_engine()
+                            )
+                            # 加载模板（所有设备共享同一套模板）
+                            matcher.load_templates(template_paths)
+                            controllers[i] = bot
+                            # 应用当前控件的配置
+                            try:
+                                delay_ms = float(delay.value)
+                                offset_px = int(click_offset.value)
+                                mode1_val = mode1.value
+                                mode2_val = mode2.value
+                                accel_val = (accel.value == '加速')
+                                delay_range = (0, delay_ms / 1000)
+                                bot.update_random_config(delay_range, (offset_px, offset_px), mode1_val, mode2_val, accel_val)
+                            except Exception as e:
+                                print(f"应用配置失败: {e}")
+                            return status
                         except Exception as e:
-                            print(f"应用配置失败: {e}")
-                        return f"已连接: {device}{enhance_status}"
+                            return f"连接失败: {e}"
                     
                     def restart_adb_func(i=idx-1):
                         bot = controllers[i]
@@ -172,7 +149,7 @@ def create_ui(template_paths):
                         except Exception as e:
                             return gr.update(), f"重启 ADB 失败: {e}"
                     
-                    def submit_config(delay_ms, offset_px, mode1_val, max_runtime_val, mode2_val, accel_val, enhance_val, mumu_path_val, i=idx-1):
+                    def submit_config(delay_ms, offset_px, mode1_val, max_runtime_val, mode2_val, accel_val, mumu_path_val, ld_path_val, i=idx-1):
                         try:
                             delay_ms = float(delay_ms)
                             offset_px = int(offset_px)
@@ -191,8 +168,8 @@ def create_ui(template_paths):
                                 "max_runtime": max_runtime_val,
                                 "mode2": mode2_val,
                                 "accel": accel_bool,
-                                "screenshot_enhance": bool(enhance_val),
-                                "mumu_path": mumu_path_val or ""
+                                "mumu_path": mumu_path_val or "",
+                                "ld_path": ld_path_val or ""
                             })
                         return "参数已更新"
                     
@@ -232,8 +209,8 @@ def create_ui(template_paths):
                     # 绑定事件
                     refresh_btn.click(fn=get_devices, outputs=choose)
                     restart_adb_btn.click(fn=restart_adb_func, outputs=[choose, ot3])
-                    connect_btn.click(fn=connect_device, inputs=[choose, enhance_cb, mumu_path], outputs=ot3)
-                    submit_btn.click(fn=submit_config, inputs=[delay, click_offset, mode1, max_runtime, mode2, accel, enhance_cb, mumu_path], outputs=ot3)
+                    connect_btn.click(fn=connect_device, inputs=[choose, mumu_path, ld_path], outputs=ot3)
+                    submit_btn.click(fn=submit_config, inputs=[delay, click_offset, mode1, max_runtime, mode2, accel, mumu_path, ld_path], outputs=ot3)
                     start_btn.click(fn=start_bot, inputs=[max_runtime, shutdown_cb], outputs=[ot3, shutdown_cb])
                     stop_btn.click(fn=stop_bot, outputs=ot3)
                     

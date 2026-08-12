@@ -16,7 +16,7 @@ class ADBClient:
     - GameController
     """
 
-    def __init__(self, device_id: Optional[str] = None):
+    def __init__(self, device_id: Optional[str] = None, touch_channel=None):
         self.device_id = device_id   # adb -s 使用
         self.device = device_id      # 给 GameController 使用
 
@@ -26,6 +26,16 @@ class ADBClient:
         self.mode1 = '无'
         self.mode2 = '只打加成'
         self._lock = threading.Lock()
+
+        # 触摸通道：MuMu 原生触摸 / minitouch / None（回退 adb input）。
+        # _touch_lock 与 _run 的 _lock 分离，避免回退 adb input 时与通道调用互相死锁；
+        # 同时串行化加速线程与主循环对触摸通道的并发调用。
+        self._touch_channel = touch_channel
+        self._touch_lock = threading.Lock()
+
+    def set_touch_channel(self, channel):
+        """注入触摸通道（MuMuExtras 或 MinitouchChannel）；None 表示用 adb input。"""
+        self._touch_channel = channel
 
     # =====================================
     # 构建 adb 命令
@@ -145,6 +155,20 @@ class ADBClient:
         x += dx
         y += dy
 
+        # 触摸通道优先（MuMu/minitouch），失败回退 adb input
+        ch = self._touch_channel
+        if ch is not None:
+            with self._touch_lock:
+                try:
+                    if hasattr(ch, "tap"):
+                        ch.tap(x, y)
+                    else:
+                        ch.touch_down(0, x, y)
+                        ch.touch_up(0)
+                    return
+                except Exception as e:
+                    print(f"[触摸] 通道失败，回退 adb input: {e}")
+
         self._run(["shell", "input", "tap", str(x), str(y)])
 
 
@@ -155,6 +179,32 @@ class ADBClient:
         self._random_delay()
         if not self.is_connected():
             raise RuntimeError("设备未连接")
+
+        dx, dy = self._random_offset()
+        x1 += dx
+        y1 += dy
+        x2 += dx
+        y2 += dy
+
+        # 触摸通道优先；minitouch 支持 swipe，MuMu 用 down/move/up 模拟
+        ch = self._touch_channel
+        if ch is not None:
+            with self._touch_lock:
+                try:
+                    if hasattr(ch, "swipe"):
+                        ch.swipe(x1, y1, x2, y2, duration)
+                    else:
+                        # MuMu：down + 分步 move + up
+                        steps = max(1, duration // 20)
+                        ch.touch_down(0, x1, y1)
+                        for i in range(1, steps + 1):
+                            cx = int(x1 + (x2 - x1) * i / steps)
+                            cy = int(y1 + (y2 - y1) * i / steps)
+                            ch.touch_move(0, cx, cy)
+                        ch.touch_up(0)
+                    return
+                except Exception as e:
+                    print(f"[触摸] 通道失败，回退 adb input: {e}")
 
         self._run([
             "shell", "input", "swipe",

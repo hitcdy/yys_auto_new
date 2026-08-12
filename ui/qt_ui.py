@@ -26,14 +26,9 @@ from PySide6.QtWidgets import (
 )
 
 from config import load_config, save_config
-from core.bot_controller import BotController
-from core.game_controller import GameController
-from vision.detector import Detector
-from vision.template_matcher import TemplateMatcher
+from core.device_assembler import assemble_device
 from vision.ocr_engine import OCREngine
-from adb.screenshot import ScreenCapturer
 from adb.adb_client import ADBClient
-from adb.mumu_extras import MuMuExtras
 
 # OCR 全局懒加载单例（与 gra_ui 一致，首次连接时初始化 Tesseract）
 _ocr_engine = None
@@ -122,16 +117,18 @@ class DeviceTab(QWidget):
         self.accel.setCurrentText("加速" if config.get("accel", True) else "非加速")
         form.addRow("加速:", self.accel)
 
-        self.enhance_cb = QCheckBox("使用截图增强(MuMu)")
-        self.enhance_cb.setChecked(config.get("screenshot_enhance", False))
-        form.addRow("", self.enhance_cb)
-
         self.mumu_path = QLineEdit(config.get("mumu_path", r"D:\Program Files\Netease\MuMu"))
         form.addRow("MuMu 安装路径:", self.mumu_path)
 
+        self.ld_path = QLineEdit(config.get("ld_path", ""))
+        self.ld_path.setPlaceholderText("留空自动探测注册表")
+        form.addRow("雷电安装路径:", self.ld_path)
+
         self.hint_label = QLabel(
-            "截图增强可用条件: 仅 Windows + MuMu; 路径下需有 external_renderer_ipc.dll;\n"
-            "设备地址 127.0.0.1:xxxx(多开按端口解析实例编号); 未生效时自动回退 ADB 截图。"
+            "截图/触摸强化自动启用，无需手动勾选：\n"
+            "截图按序尝试 MuMu → 雷电 → ADB；触摸按序尝试 MuMu → minitouch → ADB。\n"
+            "前者不可用则自动跳过，不报错。MuMu 路径需含 external_renderer_ipc.dll；"
+            "雷电路径需含 ldopengl64.dll，留空则读注册表自动探测。"
         )
         self.hint_label.setWordWrap(True)
         self.hint_label.setStyleSheet("color: gray; font-size: 11px;")
@@ -224,30 +221,12 @@ class DeviceTab(QWidget):
             self._set_status("未选择设备")
             return
         try:
-            adb = ADBClient(device_id=device)
-            capturer = ScreenCapturer(adb)
-
-            enhance_status = ""
-            if self.enhance_cb.isChecked():
-                try:
-                    if not MuMuExtras.is_supported():
-                        raise RuntimeError("非 Windows 平台")
-                    path = self.mumu_path.text().strip()
-                    if not MuMuExtras.find_dll(path):
-                        raise RuntimeError(f"路径下未找到 external_renderer_ipc.dll: {path}")
-                    mumu_idx = MuMuExtras.get_mumu_index(device)
-                    if mumu_idx is None:
-                        raise RuntimeError(f"无法从地址解析实例编号: {device}")
-                    capturer.set_extras(MuMuExtras(path, mumu_idx))
-                    enhance_status = f" [截图增强已启用, 实例{mumu_idx}]"
-                except Exception as e:
-                    enhance_status = f" [截图增强未生效: {e}, 回退 ADB]"
-
-            matcher = TemplateMatcher()
+            mumu_path = self.mumu_path.text().strip()
+            ld_path = self.ld_path.text().strip()
+            adb, capturer, matcher, detector, game_ctrl, bot, status = assemble_device(
+                device, mumu_path=mumu_path, ld_path=ld_path, ocr_engine=_get_ocr_engine()
+            )
             matcher.load_templates(self.template_paths)
-            detector = Detector(matcher, _get_ocr_engine(), capturer)
-            game_ctrl = GameController(detector, adb)
-            bot = BotController(game_ctrl, interval=1.0)
             self.bot = bot
 
             # 应用当前控件配置
@@ -265,7 +244,7 @@ class DeviceTab(QWidget):
                 print(f"应用配置失败: {e}")
 
             self.preview_label.setText("已连接，点击「开始」运行")
-            self._set_status(f"已连接: {device}{enhance_status}")
+            self._set_status(status)
         except Exception as e:
             self._set_status(f"连接失败: {e}")
 
@@ -295,8 +274,8 @@ class DeviceTab(QWidget):
             "max_runtime": max_runtime_val,
             "mode2": mode2_val,
             "accel": accel_bool,
-            "screenshot_enhance": bool(self.enhance_cb.isChecked()),
             "mumu_path": self.mumu_path.text().strip() or "",
+            "ld_path": getattr(self, "ld_path", None) and self.ld_path.text().strip() or "",
         })
         self._set_status("参数已更新")
 

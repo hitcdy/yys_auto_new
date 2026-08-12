@@ -1,10 +1,12 @@
 import json
 import os
 
-CONFIG_FILE = "config.json"
+from paths import CONFIG_PATH
+
+CONFIG_FILE = CONFIG_PATH  # 兼容旧引用（绝对路径，不再依赖 CWD）
 
 def save_config(config):
-    with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
+    with open(CONFIG_PATH, 'w', encoding='utf-8') as f:
         json.dump(config, f, indent=4, ensure_ascii=False)
 
 def load_config():
@@ -15,15 +17,15 @@ def load_config():
         "max_runtime": -1.0,
         "mode2":'只打加成',
         "accel": True,
-        "screenshot_enhance": False,
-        "mumu_path": r"D:\Program Files\Netease\MuMu"
+        "mumu_path": r"D:\Program Files\Netease\MuMu",
+        "ld_path": ""
     }
 
-    if not os.path.exists(CONFIG_FILE):
+    if not os.path.exists(CONFIG_PATH):
         return default_config
 
     try:
-        with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+        with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
             config = json.load(f)
 
         # 补全缺失字段
@@ -31,6 +33,8 @@ def load_config():
             if key not in config:
                 config[key] = default_config[key]
 
+        # 剔除已废弃字段（screenshot_enhance 已由自动链式取代）
+        config.pop("screenshot_enhance", None)
 
         return config
 
